@@ -72,7 +72,10 @@
             [ValidateNotNullOrEmpty()]
             [ValidateScript({($_ -imatch '^[a-zA-Z][\:]\\.*?[^\\]$')})]
             [Alias('LogPath')]
-            [System.IO.DirectoryInfo]$LogDir = "$($Env:Windir)\Logs\Software"
+            [System.IO.DirectoryInfo]$LogDir = "$($Env:Windir)\Logs\Software",
+            
+            [Parameter(Mandatory=$False)]
+            [Switch]$ContinueOnError
         )
 
 #Define Default Action Preferences
@@ -303,5 +306,5 @@ ForEach ($ModuleGroup In $ModuleGroups)
         If ([String]::IsNullOrEmpty($_.Exception.Message)) {$ExceptionMessage = "$($_.Exception.Errors.Message -Join "`r`n`r`n")"} Else {$ExceptionMessage = "$($_.Exception.Message)"}
           
         $ErrorMessage = "[Error Message: $($ExceptionMessage)]`r`n`r`n[ScriptName: $($_.InvocationInfo.ScriptName)]`r`n[Line Number: $($_.InvocationInfo.ScriptLineNumber)]`r`n[Line Position: $($_.InvocationInfo.OffsetInLine)]`r`n[Code: $($_.InvocationInfo.Line.Trim())]`r`n"
-        Throw "$($ErrorMessage)"
+        If ($ContinueOnError.IsPresent -eq $False) {Throw "$($ErrorMessage)"}
     }
