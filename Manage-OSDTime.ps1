@@ -1,268 +1,307 @@
 <#
-.SYNOPSIS
-	<! To get the lastest version and help of this script, use .\Manage-OSDTime.ps1 -Online !>
-	
-	This script will set and / get the OSD task sequence execution time with the option of tattooing it's value.
-    It is recommended to use the second script New-OSDTattoo.ps1 to tattoo the execution time. (but not mandatory) 
-   
-.DESCRIPTION 
-    The script works in 2 parts:
-        Part1: Setting the start time
-            1) Set this script as one of your first task sequence step (It MUST be after hard drive formating step) using the -Start Parameter
-        Part2:
-            1) Get the previous time setted.
-            2) Calculates the time difference.
-            3a)Either writes to registry (if -tattoo switch is specified)
-            3b)If the -tattoo switch is omitted,it will creates a TS variable called PSDistrict_OSDInstallTime which can be easily read by the New-OSDTattoo.ps1
-                (This be used to be tattooed in WMI / Registry / Environment Variable using the New-OSDTattoo.ps1 script from PowerShellDistrict).Recommend approch.
-        
+    .SYNOPSIS
+    A brief overview of what your function does
+          
+    .DESCRIPTION
+    Slightly more detailed description of what your function does
+          
+    .PARAMETER ParameterName
+    Your parameter description
 
-.PARAMETER Start
-    Start the time recording process.
+    .PARAMETER ParameterName
+    Your parameter description
 
-.PARAMETER End
-    End the time recording process.
+    .PARAMETER ParameterName
+    Your parameter description
 
-.PARAMETER Tattoo
-    Specify if it should be tattooed. (Registry is the only option).
-    For more tattoo possibilities, look for New-OSDTattoo.ps1 on PowershellDistrict.com
+    .PARAMETER DestinationTimeZoneID
+    A valid string. Specify a time zone ID that exists on the current system. Input will be validated against the list of time zones available on the system.
+    All date/time operations within this script will converted the current system time to the destination timezone for standardization. That time will then be converted to UTC. The UTC time will then be converted to the WMI format and stored.
+          
+    .EXAMPLE
+    powershell.exe -ExecutionPolicy Bypass -NoProfile -NoLogo -File "%FolderPathContainingScript%\%ScriptName%.ps1"
 
-.PARAMETER Root
-    Specify the registry root hvye name of the tattoo location.
-    If is inexisting, it will be created.
+    .EXAMPLE
+    powershell.exe -ExecutionPolicy Bypass -NoProfile -NoLogo -File "%FolderPathContainingScript%\%ScriptName%.ps1" -ScriptParameter "%ScriptParameterValue%"
 
-.EXAMPLE
-    Will start the time recording process
+    .EXAMPLE
+    powershell.exe -ExecutionPolicy Bypass -NoProfile -NoLogo -File "%FolderPathContainingScript%\%ScriptName%.ps1" -SwitchParameter
+  
+    .NOTES
+    Any useful tidbits
+          
+    .LINK
+    www.powershellDistrict.com
 
-    Manage-OSDTime.ps1 -Start
+    .LINK
+    https://github.com/Stephanevg/Manage-OSDTime
 
-.EXAMPLE
-    Will end the time recording process. call the New-OsdTattoo.ps1 right after this task sequence step.
+    .LINK
+    http://woshub.com/how-to-set-timezone-from-command-prompt-in-windows/
 
-    Manage-OSDTime.ps1 -end
-
-
-.NOTES
-	-Author: Stéphane van Gulick
-	-Email: stephanevg@powershelldistrict.com
-	-CreationDate: 12.01.2014
-	-LastModifiedDate: 04.14.2015
-	-Version: 2.1
-    -History:
-
-    2.1 ; 05.08.2015 ; Minor fixes.
-    2.0 ; 04.14.2015 ; Published Manage-OSDTime.ps1 (included basic tattooing).
-
-.LINK
-	www.powershellDistrict.com
-
-.LINK
-	http://social.technet.microsoft.com/profile/st%C3%A9phane%20vg/
-	
+    .LINK
+    https://devblogs.microsoft.com/scripting/powertip-use-powershell-to-retrieve-the-date-and-time-of-the-given-time-zone-id/
 #>
-[CmdletBinding(
-        HelpURI='http://powershelldistrict.com/sccm-how-to-measure-task-sequence-execution-time/'
-    )]
-Param(
-    [switch]$Start,
-    [Switch]$End,
-    [String]$Root ="OsBuildInfo",
-    [switch]$Tattoo
-)
 
-begin {
-Function New-RegistryItem {
-<#
-.SYNOPSIS
-	Set's a registry item.
-   
-.DESCRIPTION 
-    Set's a registry item in a specefic hvye.
-	
-	
-.PARAMETER RegistryPath
-    Specefiy the registry path.
-    Default it is in HKLM:SOFTWARE\Company\ hyve.
-    /!\Important note /!\
-    Powershell requires that the following registry format is respected :
-    "HKLM:SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\" <-- the "HKLM:" is important and CANNOT be "HKEY_LOCAL_MACHINE" (notice the ':' also!!).
+[CmdletBinding()]
+    Param
+        (        	     
+            [Parameter(Mandatory=$False)]
+            [ValidateNotNullOrEmpty()]
+            [ValidateScript({($_ -imatch '^.*\_$')})]
+            [String]$OSDVariablePrefix = "CustomOSDInfo_",
+            
+            [Parameter(Mandatory=$False)]
+            [Switch]$Start,
 
+            [Parameter(Mandatory=$False)]
+            [String]$OSDVariableName_Start = "$($OSDVariablePrefix)OSDStartTime",
 
-.PARAMETER RegistryString
-    This parameter will is used in order to give the name to the registry string that is needed to be tatooted and that will contain information that can later be reported on through SCCM.
-    ex : DisplayName
-    ex : InstallDate
-    Use the parameter "RegistryValue" to give a value to the "registryString".
+            [Parameter(Mandatory=$False)]
+            [Switch]$End,
 
-.PARAMETER RegistryValue
-    This parameter is used in order to give a value to a registry string that is already existing or has been previously created.
-    example : a date for a registry string called "InstalledDate".
+            [Parameter(Mandatory=$False)]
+            [String]$OSDVariableName_End = "$($OSDVariablePrefix)OSDEndTime",
+            
+            [Parameter(Mandatory=$False)]
+            [ValidateNotNullOrEmpty()]
+            [ValidateScript({($_ -iin ([System.TimeZoneInfo]::GetSystemTimeZones().ID | Sort-Object))})]
+            [String]$DestinationTimeZoneID = "Eastern Standard Time",
+            
+            [Parameter(Mandatory=$False)]
+            [ValidateNotNullOrEmpty()]
+            [ValidateScript({($_ -imatch '^[a-zA-Z][\:]\\.*?[^\\]$')})]
+            [Alias('LogPath')]
+            [System.IO.DirectoryInfo]$LogDir = "$($Env:Windir)\Logs\Software"
+        )
+
+#Define Default Action Preferences
+    $Script:DebugPreference = 'SilentlyContinue'
+    $Script:ErrorActionPreference = 'Stop'
+    $Script:VerbosePreference = 'SilentlyContinue'
+    $Script:WarningPreference = 'Continue'
+    $Script:ConfirmPreference = 'None'
     
-.Example
-     New-RegistryItem -RegistryString PowerShellDistrictURL -RegistryValue "www.PowerShellDistrict.com"
+#Load WMI Classes
+  $Baseboard = Get-WmiObject -Namespace "root\CIMv2" -Class "Win32_Baseboard" -Property * | Select-Object -Property *
+  $Bios = Get-WmiObject -Namespace "root\CIMv2" -Class "Win32_Bios" -Property * | Select-Object -Property *
+  $ComputerSystem = Get-WmiObject -Namespace "root\CIMv2" -Class "Win32_ComputerSystem" -Property * | Select-Object -Property *
+  $OperatingSystem = Get-WmiObject -Namespace "root\CIMv2" -Class "Win32_OperatingSystem" -Property * | Select-Object -Property *
 
-.NOTES
-	-Author: Stéphane van Gulick
-	-Email : 
-	-CreationDate: 12.01.2014
-	-LastModifiedDate: 12.01.2014
-	-Version: 1.0
+#Retrieve property values
+  $OSArchitecture = $($OperatingSystem.OSArchitecture).Replace("-bit", "").Replace("32", "86").Insert(0,"x").ToUpper()
+
+#Define variable(s)
+  $DateTimeLogFormat = 'dddd, MMMM dd, yyyy hh:mm:ss tt'  ###Monday, January 01, 2019 10:15:34 AM###
+  [ScriptBlock]$GetCurrentDateTimeLogFormat = {(Get-Date).ToString($DateTimeLogFormat)}
+  $DateTimeFileFormat = 'yyyyMMdd_hhmmsstt'  ###20190403_115354AM###
+  [ScriptBlock]$GetCurrentDateTimeFileFormat = {(Get-Date).ToString($DateTimeFileFormat)}
+  [System.IO.FileInfo]$ScriptPath = "$($MyInvocation.MyCommand.Definition)"
+  [System.IO.FileInfo]$ScriptLogPath = "$($LogDir.FullName)\$($ScriptPath.BaseName)_$($GetCurrentDateTimeFileFormat.Invoke()).log"
+  [System.IO.DirectoryInfo]$ScriptDirectory = "$($ScriptPath.Directory.FullName)"
+  [System.IO.DirectoryInfo]$FunctionsDirectory = "$($ScriptDirectory.FullName)\Functions"
+  [System.IO.DirectoryInfo]$ModulesDirectory = "$($ScriptDirectory.FullName)\Modules"
+  $IsWindowsPE = Test-Path -Path 'HKLM:\SYSTEM\ControlSet001\Control\MiniNT' -ErrorAction SilentlyContinue
+
+#Log any useful information
+  $LogMessage = "IsWindowsPE = $($IsWindowsPE.ToString())`r`n"
+  Write-Verbose -Message "$($LogMessage)" -Verbose
+
+  $LogMessage = "Script Path = $($ScriptPath.FullName)`r`n"
+  Write-Verbose -Message "$($LogMessage)" -Verbose
+  
+  $LogMessage = "Script Directory = $($ScriptDirectory.FullName)`r`n"
+  Write-Verbose -Message "$($LogMessage)" -Verbose
 	
-#>
-
-
-
-    [cmdletBinding()]
-    Param(
-
-
-        [Parameter(Mandatory=$false)]
-        [string]$RegistryPath = "HKLM:SOFTWARE\",
-
-        [Parameter(Mandatory=$true)]
-        [string]$RegistryString,
-
-        [Parameter(Mandatory=$true)]
-        [string]$RegistryValue
-        
-    )
-    begin{
-
+#Log task sequence variables if debug mode is enabled within the task sequence
+  Try
+    {
+        [System.__ComObject]$TSEnvironment = New-Object -ComObject "Microsoft.SMS.TSEnvironment"
+              
+        If ($TSEnvironment -ine $Null)
+          {
+              $IsRunningTaskSequence = $True
+          }
     }
-    Process{
-    
-            ##Creating the registry node
-            if (!(test-path $RegistryPath)){
-                write-verbose "Creating the registry node at : $($RegistryPath)."
-                try{
-                    if ($RegistryPath -ne "HKLM:SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\"){
-                        New-Item -Path $RegistryPath -force -ErrorAction stop | Out-Null
-                       }else{
-                        write-verbose "The registry path that is tried to be created is the uninstall string.HKLM:SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\."
-                        write-verbose "Creating this here would have as consequence to erase the whole content of the Uninstall registry hive."
-                        
-                        exit 
-                       }
-                    }
-                catch [System.Security.SecurityException] {
-                    write-warning "No access to the registry. Please launch this function with elevated privileges."
-                }
-                catch{
-                    log-message "An unknowed error occured : $_ "
-                }
-            }
-            else{
-                write-verbose "The registry hyve already exists at $($registrypath)"
-            }
+  Catch
+    {
+        $IsRunningTaskSequence = $False
+    }
 
-            ##Creating the registry string and setting its value
-            if ($RegistryPath -ne "HKLM:SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\")
-                {
-                         write-verbose "Setting the registry string $($RegistryString) with value $($registryvalue) at path : $($registrypath) ."
+#Start transcripting (Logging)
+  Try
+    {
+        If ($LogDir.Exists -eq $False) {[System.IO.Directory]::CreateDirectory($LogDir.FullName)}
+        Start-Transcript -Path "$($ScriptLogPath.FullName)" -IncludeInvocationHeader -Force -Verbose
+    }
+  Catch
+    {
+        If ([String]::IsNullOrEmpty($_.Exception.Message)) {$ExceptionMessage = "$($_.Exception.Errors.Message)"} Else {$ExceptionMessage = "$($_.Exception.Message)"}
+          
+        $ErrorMessage = "[Error Message: $($ExceptionMessage)][ScriptName: $($_.InvocationInfo.ScriptName)][Line Number: $($_.InvocationInfo.ScriptLineNumber)][Line Position: $($_.InvocationInfo.OffsetInLine)][Code: $($_.InvocationInfo.Line.Trim())]"
+        Write-Error -Message "$($ErrorMessage)"
+    }
 
-                        try{
-                           
-                            New-ItemProperty -Path $RegistryPath  -Name $RegistryString -PropertyType STRING -Value $RegistryValue -Force -ErrorAction Stop | Out-Null
-                            }
-                        catch [System.Security.SecurityException] {
-                            log-message "No access to the registry. Please launch this function with elevated privileges."
-                        }
-                        catch{
-                            log-message "An uncatched error occured : $_ "
-                        }
-                       }
-            else{
-                write-verbose "The registry path that is tried to be created is the uninstall string. HKLM:SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\."
-                write-verbose "Creating this here would have as consequence to erase the whole content of the Uninstall registry hive."
-                exit
-            }
+#Log any useful information
+  $LogMessage = "IsWindowsPE = $($IsWindowsPE.ToString())"
+  Write-Verbose -Message "$($LogMessage)" -Verbose
 
-               
-            
-            
+  $LogMessage = "Script Path = $($ScriptPath.FullName)"
+  Write-Verbose -Message "$($LogMessage)" -Verbose
+
+  $DirectoryVariables = Get-Variable | Where-Object {($_.Value -ine $Null) -and ($_.Value -is [System.IO.DirectoryInfo])}
+  
+  ForEach ($DirectoryVariable In $DirectoryVariables)
+    {
+        $LogMessage = "$($DirectoryVariable.Name) = $($DirectoryVariable.Value.FullName)"
+        Write-Verbose -Message "$($LogMessage)" -Verbose
+    }
+
+#region Import Dependency Modules
+$Modules = Get-Module -Name "$($ModulesDirectory.FullName)\*" -ListAvailable -ErrorAction Stop 
+
+$ModuleGroups = $Modules | Group-Object -Property @('Name')
+
+ForEach ($ModuleGroup In $ModuleGroups)
+  {
+      $LatestModuleVersion = $ModuleGroup.Group | Sort-Object -Property @('Version') -Descending | Select-Object -First 1
+      
+      If ($LatestModuleVersion -ine $Null)
+        {
+            $LogMessage = "Attempting to import dependency powershell module `"$($LatestModuleVersion.Name) [Version: $($LatestModuleVersion.Version.ToString())]`". Please Wait..."
+            Write-Verbose -Message "$($LogMessage)" -Verbose
+            Import-Module -Name "$($LatestModuleVersion.Path)" -Global -DisableNameChecking -Force -ErrorAction Stop
         }
+  }
+#endregion
 
-    End{}
-}
-
-Function Log-Message{
-Param(
-    [Parameter(Position=0)][string]$message,
-    [Parameter(Position=1)]$LogFile = "C:\system\logs\osd\Manage-OSDTime.log"
-    
-)
-    if(!(Test-Path $LogFile)){
-        New-Item -ItemType file -Path $LogFile -Force | Out-Null
-        write-host $message
-        $message >> $LogFile
-    }else{
-        write-host $message
-        $message >> $LogFile
-    }
-}
-
-}
-Process{
-$ScriptVersion = "2.1"
-    log-message "[OSDTIME]Starting Manage-OSDTime.ps1 with script version: $($Scriptversion)" 
-
-    $tsenv = New-Object -COMObject Microsoft.SMS.TSEnvironment
-
-    if ($start){
+#region Dot Source Dependency Scripts
+#Dot source any additional script(s) from the functions directory. This will provide flexibility to add additional functions without adding complexity to the main script and to maintain function consistency.
+  Try
+    {
+        If ($FunctionsDirectory.Exists -eq $True)
+          {
+              [String[]]$AdditionalFunctionsFilter = "*.ps1"
         
-            $UTCNow = [System.DateTimeOffset]::UtcNow
-            $tsenv.Value("StartTime") = $UTCNow.UtcDateTime 
-            $tsenv.Value("StartTimeUTCTicks") = $UTCNow.UtcTicks
-            log-message "[OSDTIME]Start time set to $($tsenv.Value('StartTime'))"
-
-    }
-    elseif($end){
-            
-            #getting existing startTime
-                $StartTime = $tsenv.Value("StartTime")
-                $StartTimeUTCTicks = $tsenv.Value("StartTimeUTCTicks")
-
-                
-                if (!($StartTime)){
-                    Log-Message "[OSDTIME]Could not find the Task sequence variable 'StartTime'. Be sure that the variable has been set PRIOR this step using the -START switch"
-                    $PSDistrict_OSDInstallTime = 'Undefined'
-                }else{
-
-                    log-message "[OSDTIME]Task sequence started at $($StartTime)."
-
-                    #Getting end time
-                        
-                        
-                        $PSDistrict_endTime = ([System.DateTimeOffset]::UtcNow).UtcDateTime
-                        $EndTimeTicks = ([System.DateTimeOffset]::UtcNow).UtcTicks
-                        $TimeSpan = new-object timespan(($EndTimeTicks - $StartTimeUTCTicks))
-                        $PSDistrict_OSDInstallTime = [math]::Round($TimeSpan.TotalMinutes,2)
-
-                        if (!($PSDistrict_OSDInstallTime)){
-                            $PSDistrict_OSDInstallTime = 'Undefined'
-                            log-message "[OSDTIME]Execution time could not be calculated. Please verify the Time settings of WinPE. Value is set to undefined."
-                        }else{
-
-                            if ($tattoo){
-                                $FullRegPath = join-path -Path "HKLM:\SOFTWARE" -ChildPath $Root
-                                New-RegistryItem -RegistryPath $FullRegPath -RegistryString "PSDistrict_OSDInstallationTime" -RegistryValue $PSDistrict_OSDInstallTime
-                                log-message "[OSDTIME]Tattooed execution time value $($PSDistrict_OSDInstallTime) to registry (only). $($FullRegPath)"
+              $AdditionalFunctionsToImport = Get-ChildItem -Path "$($FunctionsDirectory.FullName)" -Include ($AdditionalFunctionsFilter) -Recurse -Force | Where-Object {($_ -is [System.IO.FileInfo])}
+        
+              $AdditionalFunctionsToImportCount = $AdditionalFunctionsToImport | Measure-Object | Select-Object -ExpandProperty Count
+        
+              If ($AdditionalFunctionsToImportCount -gt 0)
+                {                    
+                    ForEach ($AdditionalFunctionToImport In $AdditionalFunctionsToImport)
+                      {
+                          Try
+                            {
+                                $LogMessage = "Attempting to dot source dependency script `"$($AdditionalFunctionToImport.Name)`". Please Wait...`r`n`r`nScript Path: `"$($AdditionalFunctionToImport.FullName)`""
+                                Write-Verbose -Message "$($LogMessage)" -Verbose
+                          
+                                . "$($AdditionalFunctionToImport.FullName)"
                             }
-                            else{
+                          Catch
+                            {
+                                $ErrorMessage = "[Error Message: $($_.Exception.Message)]`r`n`r`n[ScriptName: $($_.InvocationInfo.ScriptName)]`r`n[Line Number: $($_.InvocationInfo.ScriptLineNumber)]`r`n[Line Position: $($_.InvocationInfo.OffsetInLine)]`r`n[Code: $($_.InvocationInfo.Line.Trim())]"
+                                Write-Error -Message "$($ErrorMessage)" -Verbose
+                            }
+                      }
+                }
+          }
+    }
+  Catch
+    {
+        $ErrorMessage = "[Error Message: $($_.Exception.Message)]`r`n`r`n[ScriptName: $($_.InvocationInfo.ScriptName)]`r`n[Line Number: $($_.InvocationInfo.ScriptLineNumber)]`r`n[Line Position: $($_.InvocationInfo.OffsetInLine)]`r`n[Code: $($_.InvocationInfo.Line.Trim())]"
+        Write-Error -Message "$($ErrorMessage)" -Verbose            
+    }
+#endregion
+
+#Perform script action(s)
+  Try
+    {                          
+        #Tasks defined within this block will only execute if a task sequence is running
+          If (($IsRunningTaskSequence -eq $True))
+            {    
+                $OriginalTimeZone = Get-TimeZone -Verbose
+    
+                $LogMessage = "The current time zone set in the operating system is `"$($OriginalTimeZone.DisplayName)`""
+                Write-Verbose -Message "$($LogMessage)" -Verbose
+                                      
+                If ($Start.IsPresent -eq $True)
+                  {
+                      $LogMessage = "Attempting to convert the current system time to `"$($DestinationTimeZoneID)`""
+                      Write-Verbose -Message "$($LogMessage)" -Verbose
+                  
+                      $ConvertedSystemDateTime = [System.TimeZoneInfo]::ConvertTimeBySystemTimeZoneId((Get-Date), ($DestinationTimeZoneID))
+                      
+                      $LogMessage = "Attempting to convert the current system time that was converted from `"$($OriginalTimeZone.DisplayName)`" to `"$($DestinationTimeZoneID)`" into the `"Universal Time Coordinated (UTC)`" format."
+                      Write-Verbose -Message "$($LogMessage)" -Verbose
+                      
+                      $ConvertedSystemDateTimeUTC = $ConvertedSystemDateTime.ToUniversalTime()
+                  
+                      $StartTime = $ConvertedSystemDateTimeUTC
+                      
+                      $TSEnvironment.Value($OSDVariableName_Start) = $StartTime    
+          
+                      $LogMessage = "Task sequence start time set to $($TSEnvironment.Value($OSDVariableName_Start)) (Universal Time Coordinated (UTC))"
+                      Write-Verbose -Message "$($LogMessage)" -Verbose   
+                  }
+                ElseIf ($End.IsPresent -eq $True)
+                  { 
+                      $StartTime = $TSEnvironment.Value($OSDVariableName_Start)
+                
+                      If ([String]::IsNullOrEmpty($StartTime) -eq $True)
+                        {
+                            $WarningMessage = "Could not find the Task sequence variable `"$($OSDVariableName_Start)`". Be sure that the variable has been set PRIOR this step by using the -START switch"
+                            Write-Warning -Message "$($WarningMessage)" -Verbose
+                        }
+                      Else
+                        {                
+                            $LogMessage = "The currently running task sequence was started at $($StartTime) (Universal Time Coordinated (UTC))"
+                            Write-Verbose -Message "$($LogMessage)" -Verbose
+                
+                            $LogMessage = "Attempting to convert the current system time to `"$($DestinationTimeZoneID)`""
+                            Write-Verbose -Message "$($LogMessage)" -Verbose
+                  
+                            $ConvertedSystemDateTime = [System.TimeZoneInfo]::ConvertTimeBySystemTimeZoneId((Get-Date), ($DestinationTimeZoneID))
+                      
+                            $LogMessage = "Attempting to convert the current system time that was converted from `"$($OriginalTimeZone.DisplayName)`" to `"$($DestinationTimeZoneID)`" into the `"Universal Time Coordinated (UTC)`" format."
+                            Write-Verbose -Message "$($LogMessage)" -Verbose
+                      
+                            $ConvertedSystemDateTimeUTC = $ConvertedSystemDateTime.ToUniversalTime()
+                        
+                            $EndTime = $ConvertedSystemDateTimeUTC
+                            
+                            $TSEnvironment.Value($OSDVariableName_End) = $EndTime
                                 
-                                $tsenv.Value("PSDistrict_OSDInstallTime") = $PSDistrict_OSDInstallTime 
-                                log-message "[OSDTIME]Execution time is returned as a TS variable. Use New-OSDTattoo.ps1 to tattoo the information in the desired place."
-                                log-Message "[OSDTIME]Installlation time --> $($PSDistrict_OSDInstallTime)"
-                            }
-                    
+                            $LogMessage = "Task sequence end time set to $($TSEnvironment.Value($OSDVariableName_End)) (Universal Time Coordinated (UTC))"
+                            Write-Verbose -Message "$($LogMessage)" -Verbose
                         }
-                    }
-            
-                
-
-        }
-
-}
-end{
-    log-message "[OSDTIME]End of Manage-OSDTIME.ps1 script. For more information check www.Powershelldistrict.com"
-}
+                  }     
+            }
+    
+        #Tasks defined here will execute whether only if a task sequence is not running
+          If ($IsRunningTaskSequence -eq $False)
+            {
+                $WarningMessage = "There is no task sequence running.`r`n"
+                Write-Warning -Message "$($WarningMessage)" -Verbose
+            }
+                        
+        #Stop transcripting (Logging)
+          Try
+            {
+                Stop-Transcript -Verbose
+            }
+          Catch
+            {
+                If ([String]::IsNullOrEmpty($_.Exception.Message)) {$ExceptionMessage = "$($_.Exception.Errors.Message)"} Else {$ExceptionMessage = "$($_.Exception.Message)"}
+          
+                $ErrorMessage = "[Error Message: $($ExceptionMessage)][ScriptName: $($_.InvocationInfo.ScriptName)][Line Number: $($_.InvocationInfo.ScriptLineNumber)][Line Position: $($_.InvocationInfo.OffsetInLine)][Code: $($_.InvocationInfo.Line.Trim())]"
+                Write-Error -Message "$($ErrorMessage)"
+            }
+    }
+  Catch
+    {
+        If ([String]::IsNullOrEmpty($_.Exception.Message)) {$ExceptionMessage = "$($_.Exception.Errors.Message -Join "`r`n`r`n")"} Else {$ExceptionMessage = "$($_.Exception.Message)"}
+          
+        $ErrorMessage = "[Error Message: $($ExceptionMessage)]`r`n`r`n[ScriptName: $($_.InvocationInfo.ScriptName)]`r`n[Line Number: $($_.InvocationInfo.ScriptLineNumber)]`r`n[Line Position: $($_.InvocationInfo.OffsetInLine)]`r`n[Code: $($_.InvocationInfo.Line.Trim())]`r`n"
+        Throw "$($ErrorMessage)"
+    }
